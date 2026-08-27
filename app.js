@@ -13,6 +13,7 @@ const TABS = [
   { key: "gelesen", label: "Gelesen" },
   { key: "abgebrochen", label: "Abgebrochen" },
 ];
+const VIEW_TABS = [{ key: "alle", label: "Alle" }, ...TABS];
 const MONTH_NAMES = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
 
 const ICONS = {
@@ -145,6 +146,12 @@ function coverHTML(book, sizePx) {
   const w = sizePx, h = Math.round(sizePx * 1.4);
   const hue = hueOf(book.titel);
   const bg = `linear-gradient(155deg, hsl(${hue} 32% 26%), hsl(${hue} 28% 14%))`;
+  if (book.cover) {
+    return `<div class="cover" style="width:${w}px;height:${h}px;background:${bg};" data-cover-id="${esc(book.id)}">
+      <span style="display:none;font-size:${Math.round(sizePx*0.24)}px;">${esc(initials(book.autor))}</span>
+      <img src="${esc(book.cover)}" style="display:block;" alt="" loading="lazy" />
+    </div>`;
+  }
   return `<div class="cover" style="width:${w}px;height:${h}px;background:${bg};" data-cover-id="${esc(book.id)}">
     <span style="font-size:${Math.round(sizePx*0.24)}px;">${esc(initials(book.autor))}</span>
     <img style="display:none;" alt="" loading="lazy" />
@@ -153,8 +160,8 @@ function coverHTML(book, sizePx) {
 function mountCovers(container) {
   container.querySelectorAll("[data-cover-id]").forEach(el => {
     const id = el.getAttribute("data-cover-id");
-    const book = state.books.find(b => b.id === id);
-    if (!book) return;
+    const book = state.books.find(b => b.id === id) || (state.draft && state.draft.id === id ? state.draft : null);
+    if (!book || book.cover) return; // manual cover already rendered directly, or book not found
     const img = el.querySelector("img");
     const span = el.querySelector("span");
     requestCover(book, img, span);
@@ -172,9 +179,9 @@ async function boot() {
   render();
 }
 
-function setView(v) { state.view = v; render(); }
-function openBook(id) { state.selectedId = id; state.isNew = false; state.draft = { ...state.books.find(b => b.id === id) }; state.view = "detail"; render(); }
-function addBook() { state.selectedId = null; state.isNew = true; state.draft = emptyBook(); state.view = "detail"; render(); }
+function setView(v) { state.view = v; pushHistory(); render(); }
+function openBook(id) { state.selectedId = id; state.isNew = false; state.draft = { ...state.books.find(b => b.id === id) }; state.view = "detail"; pushHistory(); render(); }
+function addBook() { state.selectedId = null; state.isNew = true; state.draft = emptyBook(); state.view = "detail"; pushHistory(); render(); }
 async function saveBook() {
   const b = state.draft;
   if (state.isNew) state.books = [b, ...state.books];
@@ -279,14 +286,14 @@ function renderHome() {
 /* ====================== LIST ====================== */
 function renderList() {
   const b = state.books;
-  const counts = { ungelesen:0, am_lesen:0, gelesen:0, abgebrochen:0 };
+  const counts = { alle: b.length, ungelesen:0, am_lesen:0, gelesen:0, abgebrochen:0 };
   b.forEach(x => { if (counts[x.status] !== undefined) counts[x.status]++; });
   const genres = [...new Set(b.map(x => x.genre).filter(Boolean))].sort();
   const kategorien = [...new Set(b.map(x => x.kategorie).filter(Boolean))].sort();
   const jahre = [...new Set(b.map(x => x.leseende?.slice(0,4)).filter(Boolean))].sort().reverse();
   const f = state.filters;
   const filtered = b.filter(x => {
-    if (x.status !== state.tab) return false;
+    if (state.tab !== "alle" && x.status !== state.tab) return false;
     if (state.query && !(`${x.titel} ${x.autor}`.toLowerCase().includes(state.query.toLowerCase()))) return false;
     if (f.jahr && x.leseende?.slice(0,4) !== f.jahr) return false;
     if (f.monat && x.leseende?.slice(5,7) !== f.monat) return false;
@@ -314,7 +321,7 @@ function renderList() {
         <button class="filterbtn" data-action="toggleFilter">${ICONS.filter}${activeFilterCount>0?`<span class="filterbadge">${activeFilterCount}</span>`:""}</button>
       </div>
       <div class="tabs">
-        ${TABS.map(t => `<button class="tab ${state.tab===t.key?"active":""}" data-action="tab" data-tab="${t.key}">${t.label} (${counts[t.key]})</button>`).join("")}
+        ${VIEW_TABS.map(t => `<button class="tab ${state.tab===t.key?"active":""}" data-action="tab" data-tab="${t.key}">${t.label} (${counts[t.key]})</button>`).join("")}
       </div>
     </div>
     <div class="pad" style="padding-top:6px;flex:1;overflow-y:auto;">
@@ -452,7 +459,15 @@ function renderDetail() {
       <button class="backbtn" data-action="backFromDetail">${ICONS.back} Zurück</button>
       <span class="muted serif" style="font-size:15px;">${state.isNew ? "Neues Buch" : "Bearbeiten"}</span>
     </div>
-    <div style="display:flex;justify-content:center;padding:6px 0 18px;">${coverHTML(b, 110)}</div>
+    <div style="display:flex;flex-direction:column;align-items:center;padding:6px 0 6px;">
+      <div id="coverPreviewWrap">${coverHTML(b, 110)}</div>
+      <div style="display:flex;gap:14px;margin-top:8px;">
+        <button type="button" style="background:none;border:none;color:var(--brass);font-size:12.5px;cursor:pointer;" data-action="pickCoverFile">Foto hochladen</button>
+        <button type="button" style="background:none;border:none;color:var(--brass);font-size:12.5px;cursor:pointer;" data-action="pasteCoverUrl">Bild-URL einfügen</button>
+        ${b.cover ? `<button type="button" style="background:none;border:none;color:var(--st-abbruch);font-size:12.5px;cursor:pointer;" data-action="removeCover">Entfernen</button>` : ""}
+      </div>
+      <input type="file" id="coverFileInput" accept="image/*" style="display:none;" />
+    </div>
     <div class="pad" style="padding-top:0;padding-bottom:100px;">
       ${fieldHTML("Titel", `<input id="f_titel" value="${esc(b.titel)}" />`)}
       ${fieldHTML("Autor", `<input id="f_autor" value="${esc(b.autor)}" />`)}
@@ -580,12 +595,18 @@ function attachHandlers() {
       else if (action === "yearNext") { state.statsYear++; render(); }
       else if (action === "monthPrev") { let m = state.monthCursor.m - 1; state.monthCursor = m < 0 ? { y: state.monthCursor.y-1, m:11 } : { y: state.monthCursor.y, m }; render(); }
       else if (action === "monthNext") { let m = state.monthCursor.m + 1; state.monthCursor = m > 11 ? { y: state.monthCursor.y+1, m:0 } : { y: state.monthCursor.y, m }; render(); }
-      else if (action === "backFromDetail") { state.view = state.isNew ? "home" : "list"; render(); }
+      else if (action === "backFromDetail") { history.back(); }
       else if (action === "saveGoal") {} // handled below via input
       else if (action === "star") { state.draft.bewertung = state.draft.bewertung === Number(el.getAttribute("data-n")) ? 0 : Number(el.getAttribute("data-n")); render(); }
       else if (action === "saveBook") { collectDraftFromForm(); saveBook(); }
       else if (action === "deleteBook") { if (confirm("Dieses Buch wirklich löschen?")) deleteBook(el.getAttribute("data-id")); }
       else if (action === "pickCsv") { document.getElementById("csvInput").click(); }
+      else if (action === "pickCoverFile") { document.getElementById("coverFileInput").click(); }
+      else if (action === "pasteCoverUrl") {
+        const url = prompt("Bild-URL einfügen:");
+        if (url) { state.draft.cover = url.trim(); render(); }
+      }
+      else if (action === "removeCover") { state.draft.cover = null; render(); }
     });
   });
 
@@ -629,6 +650,30 @@ function attachHandlers() {
   if (csvInput) csvInput.addEventListener("change", (e) => {
     if (e.target.files[0]) handleCsvFile(e.target.files[0]);
   });
+
+  // Cover file input (resize to keep storage small)
+  const coverFileInput = document.getElementById("coverFileInput");
+  if (coverFileInput) coverFileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxW = 400;
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        state.draft.cover = canvas.toDataURL("image/jpeg", 0.85);
+        render();
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function collectDraftFromForm(skipArt) {
@@ -651,4 +696,24 @@ function collectDraftFromForm(skipArt) {
   if (get("f_notizen")) d.notizen = get("f_notizen").value;
 }
 
-boot();
+/* ====================== BROWSER-VERLAUF (Zurück-Taste) ====================== */
+function pushHistory() {
+  history.pushState({ view: state.view, selectedId: state.selectedId, isNew: state.isNew }, "", "#" + state.view);
+}
+window.addEventListener("popstate", (e) => {
+  if (e.state) {
+    state.view = e.state.view;
+    state.selectedId = e.state.selectedId;
+    state.isNew = e.state.isNew;
+    if (state.view === "detail") {
+      state.draft = state.isNew ? emptyBook() : { ...state.books.find(b => b.id === state.selectedId) };
+    }
+  } else {
+    state.view = "home";
+  }
+  render();
+});
+
+boot().then(() => {
+  history.replaceState({ view: "home", selectedId: null, isNew: false }, "", "#home");
+});
