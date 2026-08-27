@@ -1,4 +1,4 @@
-const CACHE_NAME = "meine-buecher-v1";
+const CACHE_NAME = "meine-buecher-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -6,8 +6,8 @@ const APP_SHELL = [
   "./app.js",
   "./books-data.js",
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -29,14 +29,13 @@ self.addEventListener("fetch", (event) => {
   // Never cache external API calls (book covers, etc.) - always go to network
   if (url.origin !== self.location.origin) return;
 
+  // Network-first for our own app files: always try to get the latest version,
+  // only fall back to cache when offline.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
-      }).catch(() => cached);
-    })
+    fetch(event.request).then((response) => {
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+      return response;
+    }).catch(() => caches.match(event.request))
   );
 });
