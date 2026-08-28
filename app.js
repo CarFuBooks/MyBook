@@ -288,7 +288,7 @@ function renderHome() {
 function getFilteredBooks() {
   const b = state.books;
   const f = state.filters;
-  return b.filter(x => {
+  const filtered = b.filter(x => {
     if (state.tab !== "alle" && x.status !== state.tab) return false;
     if (state.query && !(`${x.titel} ${x.autor}`.toLowerCase().includes(state.query.toLowerCase()))) return false;
     if (f.jahr && x.leseende?.slice(0,4) !== f.jahr) return false;
@@ -298,6 +298,13 @@ function getFilteredBooks() {
     if (f.genre && x.genre !== f.genre) return false;
     if (f.kategorie && x.kategorie !== f.kategorie) return false;
     return true;
+  });
+  // Neueste Leseende zuerst; Bücher ohne Leseende (z.B. Ungelesen) ans Ende
+  return filtered.sort((a, b2) => {
+    if (!a.leseende && !b2.leseende) return 0;
+    if (!a.leseende) return 1;
+    if (!b2.leseende) return -1;
+    return b2.leseende.localeCompare(a.leseende);
   });
 }
 
