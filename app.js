@@ -169,10 +169,139 @@ function mountCovers(container) {
   });
 }
 
-/* ====================== RENDER: ROOT ====================== */
+/* ====================== GOOGLE DRIVE SYNC ====================== */
+const GOOGLE_CLIENT_ID = "802744081085-700op7n4fepvjmk9g83uu9329ssn8kbs.apps.googleusercontent.com";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+const DRIVE_FILENAME = "buecher-app-daten.json";
+
+const GDrive = {
+  tokenClient: null,
+  accessToken: null,
+  fileId: null,
+  connected: false,
+  status: "idle", // idle | syncing | error
+
+  init() {
+    this.fileId = localStorage.getItem("gdrive_file_id") || null;
+    this.connected = localStorage.getItem("gdrive_connected") === "1";
+  },
+
+  ensureTokenClient() {
+    if (this.tokenClient || typeof google === "undefined") return;
+    this.tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: () => {},
+    });
+  },
+
+  requestToken(promptMode) {
+    return new Promise((resolve, reject) => {
+      this.ensureTokenClient();
+      if (!this.tokenClient) { reject(new Error("Google-Bibliothek noch nicht geladen")); return; }
+      this.tokenClient.callback = (resp) => {
+        if (resp.error) { reject(resp); return; }
+        this.accessToken = resp.access_token;
+        resolve(resp.access_token);
+      };
+      this.tokenClient.requestAccessToken({ prompt: promptMode });
+    });
+  },
+
+  async findExistingFile() {
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27${DRIVE_FILENAME}%27&fields=files(id,name)`,
+      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+    );
+    const data = await res.json();
+    if (data.files && data.files.length > 0) { this.fileId = data.files[0].id; return true; }
+    return false;
+  },
+
+  async downloadFile() {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${this.fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
+    return res.json();
+  },
+
+  async createFile(content) {
+    const metadata = { name: DRIVE_FILENAME, parents: ["appDataFolder"] };
+    const boundary = "-------buecherapp";
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(content)}\r\n--${boundary}--`;
+    const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.accessToken}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+      body,
+    });
+    const data = await res.json();
+    this.fileId = data.id;
+  },
+
+  async updateFile(content) {
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${this.fileId}?uploadType=media`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${this.accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(content),
+    });
+  },
+
+  async connect() {
+    try {
+      this.status = "syncing"; render();
+      await this.requestToken("consent");
+      const exists = await this.findExistingFile();
+      if (exists) {
+        const useRemote = confirm(
+          "Auf Google Drive wurde bereits eine gespeicherte Bibliothek gefunden.\n\n" +
+          "OK = Von Drive laden (ersetzt die Daten auf diesem Gerät)\n" +
+          "Abbrechen = Diese Geräte-Daten stattdessen zu Drive hochladen"
+        );
+        if (useRemote) {
+          const remote = await this.downloadFile();
+          if (remote.books) { state.books = remote.books; await Storage.setBooks(state.books); }
+          if (remote.goal) { state.goal = remote.goal; await Storage.setGoal(state.goal); }
+        } else {
+          await this.updateFile({ books: state.books, goal: state.goal });
+        }
+      } else {
+        await this.createFile({ books: state.books, goal: state.goal });
+      }
+      this.connected = true;
+      this.status = "idle";
+      localStorage.setItem("gdrive_connected", "1");
+      localStorage.setItem("gdrive_file_id", this.fileId);
+      showToast("Mit Google Drive verbunden");
+    } catch (e) {
+      this.status = "error";
+      showToast("Verbindung zu Google Drive fehlgeschlagen");
+    }
+    render();
+  },
+
+  async sync() {
+    if (!this.connected) return;
+    try {
+      if (!this.accessToken) await this.requestToken("");
+      if (!this.fileId) return;
+      await this.updateFile({ books: state.books, goal: state.goal });
+    } catch (e) { /* stiller Fehlschlag, nächster Versuch beim nächsten Speichern */ }
+  },
+
+  disconnect() {
+    this.connected = false;
+    this.accessToken = null;
+    localStorage.removeItem("gdrive_connected");
+    showToast("Google Drive getrennt");
+    render();
+  },
+};
 const appEl = document.getElementById("app");
 
 async function boot() {
+  GDrive.init();
   const savedBooks = await Storage.getBooks();
   state.books = savedBooks || SEED_BOOKS;
   if (!savedBooks) await Storage.setBooks(state.books);
@@ -188,22 +317,26 @@ async function saveBook() {
   if (state.isNew) state.books = [b, ...state.books];
   else state.books = state.books.map(x => x.id === b.id ? b : x);
   await Storage.setBooks(state.books);
+  GDrive.sync();
   state.view = "list";
   render();
 }
 async function deleteBook(id) {
   state.books = state.books.filter(b => b.id !== id);
   await Storage.setBooks(state.books);
+  GDrive.sync();
   state.view = "list";
   render();
 }
 async function setGoal(g) {
   state.goal = g;
   await Storage.setGoal(g);
+  GDrive.sync();
 }
 async function importBooks(list) {
   state.books = [...state.books, ...list];
   await Storage.setBooks(state.books);
+  GDrive.sync();
   render();
 }
 
@@ -596,7 +729,12 @@ function renderSettings() {
     <div class="card">
       <h3 style="font-size:15px;margin-bottom:6px;">Cloud-Speicher</h3>
       <p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.5;">Verbinde Google Drive oder OneDrive, um deine Bibliothek geräteübergreifend zu sichern.</p>
-      <button class="btn-outline" disabled style="opacity:.5;">${ICONS.cloud} Noch nicht eingerichtet</button>
+      ${GDrive.connected
+        ? `<div style="display:flex;align-items:center;justify-content:space-between;">
+             <span style="color:var(--st-gelesen);font-size:13px;font-weight:600;">✓ Mit Google Drive verbunden</span>
+             <button data-action="gdriveDisconnect" style="background:none;border:none;color:var(--st-abbruch);font-size:12.5px;cursor:pointer;">Trennen</button>
+           </div>`
+        : `<button class="btn-outline" data-action="gdriveConnect">${ICONS.cloud} Mit Google Drive verbinden</button>`}
     </div>
     <div class="card">
       <h3 style="font-size:15px;margin-bottom:6px;">Über diese App</h3>
@@ -637,6 +775,8 @@ function attachHandlers() {
       else if (action === "deleteBook") { if (confirm("Dieses Buch wirklich löschen?")) deleteBook(el.getAttribute("data-id")); }
       else if (action === "pickCsv") { document.getElementById("csvInput").click(); }
       else if (action === "shareList") { shareList(); }
+      else if (action === "gdriveConnect") { GDrive.connect(); }
+      else if (action === "gdriveDisconnect") { GDrive.disconnect(); }
       else if (action === "pickCoverFile") { document.getElementById("coverFileInput").click(); }
       else if (action === "pasteCoverUrl") {
         const url = prompt("Bild-URL einfügen:");
