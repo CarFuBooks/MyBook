@@ -356,8 +356,10 @@ function renderList() {
 /* ====================== STATS ====================== */
 function computeAgg(list) {
   const finished = list.filter(b => b.status === "gelesen");
-  const seiten = finished.reduce((s, b) => s + (b.seiten || 0), 0);
-  const stunden = finished.reduce((s, b) => s + hoursOf(b), 0);
+  // Seiten nur bei gedruckten Büchern/E-Books zählen (Hörbücher haben oft zusätzlich
+  // eine "gedruckte Äquivalent"-Seitenzahl gespeichert, die sonst doppelt zählen würde)
+  const seiten = finished.filter(b => b.art !== "hoerbuch").reduce((s, b) => s + (b.seiten || 0), 0);
+  const stunden = finished.filter(b => b.art === "hoerbuch").reduce((s, b) => s + hoursOf(b), 0);
   const rated = finished.filter(b => b.bewertung > 0);
   const avgRating = rated.length ? rated.reduce((s, b) => s + b.bewertung, 0) / rated.length : 0;
   const durations = finished.map(readDays).filter(d => d !== null);
