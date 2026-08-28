@@ -248,6 +248,11 @@ const GDrive = {
     });
   },
 
+  getLocalModified() { return Number(localStorage.getItem("local_last_modified") || 0); },
+  bumpLocalModified() { localStorage.setItem("local_last_modified", String(Date.now())); },
+  getLastSyncedModified() { return Number(localStorage.getItem("last_synced_modified") || 0); },
+  setLastSyncedModified(ts) { localStorage.setItem("last_synced_modified", String(ts)); },
+
   async connect() {
     try {
       this.status = "syncing"; render();
@@ -263,11 +268,18 @@ const GDrive = {
           const remote = await this.downloadFile();
           if (remote.books) { state.books = remote.books; await Storage.setBooks(state.books); }
           if (remote.goal) { state.goal = remote.goal; await Storage.setGoal(state.goal); }
+          this.setLastSyncedModified(remote.updatedAt || Date.now());
         } else {
-          await this.updateFile({ books: state.books, goal: state.goal });
+          this.bumpLocalModified();
+          const ts = this.getLocalModified();
+          await this.updateFile({ books: state.books, goal: state.goal, updatedAt: ts });
+          this.setLastSyncedModified(ts);
         }
       } else {
-        await this.createFile({ books: state.books, goal: state.goal });
+        this.bumpLocalModified();
+        const ts = this.getLocalModified();
+        await this.createFile({ books: state.books, goal: state.goal, updatedAt: ts });
+        this.setLastSyncedModified(ts);
       }
       this.connected = true;
       this.status = "idle";
@@ -281,12 +293,44 @@ const GDrive = {
     render();
   },
 
+  // Zwei-Wege-Abgleich: schaut, ob auf Drive eine neuere Version liegt als lokal,
+  // oder ob lokal etwas Neueres liegt, das noch hochgeladen werden muss.
+  async reconcile(showFeedback) {
+    if (!this.connected || !this.fileId) return;
+    try {
+      if (!this.accessToken) await this.requestToken("");
+      const remote = await this.downloadFile();
+      const remoteTs = remote.updatedAt || 0;
+      const localTs = this.getLocalModified();
+      if (remoteTs > localTs) {
+        state.books = remote.books || state.books;
+        state.goal = remote.goal || state.goal;
+        await Storage.setBooks(state.books);
+        await Storage.setGoal(state.goal);
+        this.setLastSyncedModified(remoteTs);
+        render();
+        if (showFeedback) showToast("Neuere Daten von Google Drive geladen");
+      } else if (localTs > this.getLastSyncedModified()) {
+        await this.updateFile({ books: state.books, goal: state.goal, updatedAt: localTs });
+        this.setLastSyncedModified(localTs);
+        if (showFeedback) showToast("Änderungen zu Google Drive hochgeladen");
+      } else if (showFeedback) {
+        showToast("Bereits aktuell");
+      }
+    } catch (e) {
+      if (showFeedback) showToast("Abgleich fehlgeschlagen, versuch's gleich nochmal");
+    }
+  },
+
   async sync() {
     if (!this.connected) return;
+    this.bumpLocalModified();
     try {
       if (!this.accessToken) await this.requestToken("");
       if (!this.fileId) return;
-      await this.updateFile({ books: state.books, goal: state.goal });
+      const ts = this.getLocalModified();
+      await this.updateFile({ books: state.books, goal: state.goal, updatedAt: ts });
+      this.setLastSyncedModified(ts);
     } catch (e) { /* stiller Fehlschlag, nächster Versuch beim nächsten Speichern */ }
   },
 
@@ -307,6 +351,7 @@ async function boot() {
   if (!savedBooks) await Storage.setBooks(state.books);
   state.goal = await Storage.getGoal();
   render();
+  if (GDrive.connected) GDrive.reconcile(false);
 }
 
 function setView(v) { state.view = v; pushHistory(); render(); }
@@ -762,10 +807,11 @@ function renderSettings() {
       <h3 style="font-size:15px;margin-bottom:6px;">Cloud-Speicher</h3>
       <p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.5;">Verbinde Google Drive oder OneDrive, um deine Bibliothek geräteübergreifend zu sichern.</p>
       ${GDrive.connected
-        ? `<div style="display:flex;align-items:center;justify-content:space-between;">
+        ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
              <span style="color:var(--st-gelesen);font-size:13px;font-weight:600;">✓ Mit Google Drive verbunden</span>
              <button data-action="gdriveDisconnect" style="background:none;border:none;color:var(--st-abbruch);font-size:12.5px;cursor:pointer;">Trennen</button>
-           </div>`
+           </div>
+           <button class="btn-outline" data-action="gdriveSync">${ICONS.cloud} Jetzt abgleichen</button>`
         : `<button class="btn-outline" data-action="gdriveConnect">${ICONS.cloud} Mit Google Drive verbinden</button>`}
     </div>
     <div class="card">
@@ -810,6 +856,7 @@ function attachHandlers() {
       else if (action === "gdriveConnect") { GDrive.connect(); }
       else if (action === "gdriveDisconnect") { GDrive.disconnect(); }
       else if (action === "exportCsv") { exportCSV(); }
+      else if (action === "gdriveSync") { GDrive.reconcile(true); }
       else if (action === "pickCoverFile") { document.getElementById("coverFileInput").click(); }
       else if (action === "pasteCoverUrl") {
         const url = prompt("Bild-URL einfügen:");
