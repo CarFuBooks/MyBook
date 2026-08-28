@@ -738,7 +738,7 @@ function renderSettings() {
     </div>
     <div class="card">
       <h3 style="font-size:15px;margin-bottom:6px;">Über diese App</h3>
-      <p class="muted" style="font-size:12.5px;margin:0;line-height:1.6;">Deine persönliche Lese-Bibliothek · ${state.books.length} Bücher gespeichert. Daten werden aktuell lokal auf diesem Gerät gespeichert.</p>
+      <p class="muted" style="font-size:12.5px;margin:0;line-height:1.6;">Deine persönliche Lese-Bibliothek · ${state.books.length} Bücher gespeichert. ${GDrive.connected ? "Daten werden automatisch mit Google Drive gesichert." : "Daten werden aktuell lokal auf diesem Gerät gespeichert."}</p>
     </div>
   </div></div>`;
 }
