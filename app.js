@@ -31,6 +31,7 @@ const ICONS = {
   upload: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>`,
   camera: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="14" r="3.5"/></svg>`,
   cloud: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6.5 19a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.6-1.8A4.5 4.5 0 0 1 17 19H6.5Z"/></svg>`,
+  share: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.3 10.7l7.4-4.1M8.3 13.3l7.4 4.1"/></svg>`,
 };
 
 /* ====================== STORAGE (lokal, Cloud folgt) ====================== */
@@ -284,15 +285,10 @@ function renderHome() {
 }
 
 /* ====================== LIST ====================== */
-function renderList() {
+function getFilteredBooks() {
   const b = state.books;
-  const counts = { alle: b.length, ungelesen:0, am_lesen:0, gelesen:0, abgebrochen:0 };
-  b.forEach(x => { if (counts[x.status] !== undefined) counts[x.status]++; });
-  const genres = [...new Set(b.map(x => x.genre).filter(Boolean))].sort();
-  const kategorien = [...new Set(b.map(x => x.kategorie).filter(Boolean))].sort();
-  const jahre = [...new Set(b.map(x => x.leseende?.slice(0,4)).filter(Boolean))].sort().reverse();
   const f = state.filters;
-  const filtered = b.filter(x => {
+  return b.filter(x => {
     if (state.tab !== "alle" && x.status !== state.tab) return false;
     if (state.query && !(`${x.titel} ${x.autor}`.toLowerCase().includes(state.query.toLowerCase()))) return false;
     if (f.jahr && x.leseende?.slice(0,4) !== f.jahr) return false;
@@ -303,6 +299,35 @@ function renderList() {
     if (f.kategorie && x.kategorie !== f.kategorie) return false;
     return true;
   });
+}
+
+async function shareList() {
+  const list = getFilteredBooks();
+  const tabLabel = VIEW_TABS.find(t => t.key === state.tab)?.label || "Bücher";
+  const today = new Date().toLocaleDateString("de-DE");
+  const lines = list.map(b => `• ${b.titel} — ${b.autor || "Unbekannt"}`);
+  const text = `${tabLabel} (${list.length} Bücher) — Stand ${today}\n\n${lines.join("\n")}`;
+  if (navigator.share) {
+    try { await navigator.share({ title: `Meine Bücher – ${tabLabel}`, text }); } catch {}
+  } else {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Liste in Zwischenablage kopiert");
+    } catch {
+      showToast("Teilen wird von diesem Browser nicht unterstützt");
+    }
+  }
+}
+
+function renderList() {
+  const b = state.books;
+  const counts = { alle: b.length, ungelesen:0, am_lesen:0, gelesen:0, abgebrochen:0 };
+  b.forEach(x => { if (counts[x.status] !== undefined) counts[x.status]++; });
+  const genres = [...new Set(b.map(x => x.genre).filter(Boolean))].sort();
+  const kategorien = [...new Set(b.map(x => x.kategorie).filter(Boolean))].sort();
+  const jahre = [...new Set(b.map(x => x.leseende?.slice(0,4)).filter(Boolean))].sort().reverse();
+  const f = state.filters;
+  const filtered = getFilteredBooks();
   const activeFilterCount = Object.values(f).filter(Boolean).length;
 
   const filterRow = (label, key, options) => `<div class="filterrow">
@@ -319,6 +344,7 @@ function renderList() {
       <div style="display:flex;gap:8px;align-items:center;">
         <div class="searchbar">${ICONS.search}<input id="searchInput" placeholder="Bücher durchsuchen …" value="${esc(state.query)}" /></div>
         <button class="filterbtn" data-action="toggleFilter">${ICONS.filter}${activeFilterCount>0?`<span class="filterbadge">${activeFilterCount}</span>`:""}</button>
+        <button class="filterbtn" data-action="shareList" title="Liste teilen">${ICONS.share}</button>
       </div>
       <div class="tabs">
         ${VIEW_TABS.map(t => `<button class="tab ${state.tab===t.key?"active":""}" data-action="tab" data-tab="${t.key}">${t.label} (${counts[t.key]})</button>`).join("")}
@@ -603,6 +629,7 @@ function attachHandlers() {
       else if (action === "saveBook") { collectDraftFromForm(); saveBook(); }
       else if (action === "deleteBook") { if (confirm("Dieses Buch wirklich löschen?")) deleteBook(el.getAttribute("data-id")); }
       else if (action === "pickCsv") { document.getElementById("csvInput").click(); }
+      else if (action === "shareList") { shareList(); }
       else if (action === "pickCoverFile") { document.getElementById("coverFileInput").click(); }
       else if (action === "pasteCoverUrl") {
         const url = prompt("Bild-URL einfügen:");
