@@ -717,6 +717,33 @@ function handleCsvFile(file) {
   reader.readAsText(file, "utf-8");
 }
 
+function exportCSV() {
+  const header = ["Titel","Autor(en)","ISBN","ASIN","Erscheinungsjahr","Genre","Seitenanzahl","Dauer (Stunden)","Dauer (Minuten)","Buchart","Preis","Erhalten als","Lesestatus","Lesebeginn","Leseende","Bewertung","Kategorie","Notizen","Erhalten am"];
+  const artMapOut = { hoerbuch:"Hörbuch", hardcover:"Hardcover", ebook:"E-Book", taschenbuch:"Taschenbuch" };
+  const erhMapOut = { geschenk:"Geschenk", tausch:"Tausch", leihe:"Leihe", kauf:"Kauf" };
+  const statusMapOut = { gelesen:"Gelesen", am_lesen:"Am lesen", ungelesen:"Ungelesen", abgebrochen:"Abgebrochen" };
+  const fmtDateOut = iso => { if (!iso) return ""; const [y,m,d] = iso.split("-"); return `${d}.${m}.${y}`; };
+  const esc2 = v => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
+  const rows = state.books.map(b => [
+    b.titel, b.autor, b.isbn, b.asin, b.jahr, b.genre, b.seiten || "", b.dauerStunden || "", b.dauerMinuten || "",
+    artMapOut[b.art] || b.art, String(b.preis || 0).replace(".", ","), erhMapOut[b.erhaltenAls] || b.erhaltenAls,
+    statusMapOut[b.status] || b.status, fmtDateOut(b.lesebeginn), fmtDateOut(b.leseende), b.bewertung || "",
+    b.kategorie, b.notizen, fmtDateOut(b.erhaltenAm),
+  ].map(esc2).join(";"));
+  const csv = "\uFEFF" + [header.join(";"), ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const today = new Date().toISOString().slice(0,10).replace(/-/g,"");
+  a.href = url;
+  a.download = `Meine-Buecher_${today}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast("CSV-Datei heruntergeladen");
+}
+
 function renderSettings() {
   return `<div class="view"><div class="pad">
     <h1 style="font-size:22px;margin-bottom:18px;">Mehr</h1>
@@ -725,6 +752,11 @@ function renderSettings() {
       <p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.5;">CSV-Export (z. B. aus Bookstats) hochladen. Neue Bücher werden zur Bibliothek hinzugefügt.</p>
       <button class="btn-outline" data-action="pickCsv">${ICONS.upload} CSV-Datei auswählen</button>
       <input type="file" id="csvInput" accept=".csv" style="display:none;" />
+    </div>
+    <div class="card">
+      <h3 style="font-size:15px;margin-bottom:6px;">Bücher exportieren</h3>
+      <p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.5;">Lade deine komplette Bibliothek als CSV-Datei herunter – z. B. als Sicherung oder zum Umzug in eine andere App.</p>
+      <button class="btn-outline" data-action="exportCsv">${ICONS.share} Als CSV herunterladen</button>
     </div>
     <div class="card">
       <h3 style="font-size:15px;margin-bottom:6px;">Cloud-Speicher</h3>
@@ -777,6 +809,7 @@ function attachHandlers() {
       else if (action === "shareList") { shareList(); }
       else if (action === "gdriveConnect") { GDrive.connect(); }
       else if (action === "gdriveDisconnect") { GDrive.disconnect(); }
+      else if (action === "exportCsv") { exportCSV(); }
       else if (action === "pickCoverFile") { document.getElementById("coverFileInput").click(); }
       else if (action === "pasteCoverUrl") {
         const url = prompt("Bild-URL einfügen:");
